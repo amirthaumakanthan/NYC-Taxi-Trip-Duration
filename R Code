@@ -14,31 +14,31 @@ library('tibble')
 library('stringr')
 library('geosphere') 
 
-#load files
+# load files
 train_data <- read.csv(file.choose())
 test_data <- read.csv(file.choose())
 
-#summary check
+# summary check
 str(train_data)
 head(train_data)
 summary(train_data)
 
-#missing values check 
+# missing values check 
 sum(is.na(train_data))
 sum(is.na(test_data))
 
-#combine train and test
+# combining train and test data
 full <- bind_rows(train_data %>% mutate(dset = "train_data"), 
                   test_data %>% mutate(dset = "test_data",
                                        dropoff_datetime = NA,
                                        trip_duration = NA))
 full <- full %>% mutate(dset = factor(dset))
 
-#airports
+# add additional data based on current data - airports
 jfk_coord <- tibble(lon = -73.778889, lat = 40.639722)
 la_guardia_coord <- tibble(lon = -73.872611, lat = 40.77725)
 
-#total distance
+# add additional data based on current data - total distance
 pick_coord <- train_data %>%
   select(pickup_longitude, pickup_latitude)
 
@@ -59,7 +59,7 @@ train_data <- train_data %>%
          lg_trip = (lg_dist_pick < 2e3) | (lg_dist_drop < 2e3),
   )
 
-#longer than a day trips
+# data cleaning - longer than a day trips
 day_plus_trips <- train_data %>%
   filter(trip_duration > 24*3600)
 
@@ -67,19 +67,19 @@ nrow(day_plus_trips)
 
 train_data <- train_data[!(train_data$trip_duration>24*3600),]
 
-#day trips
+# data cleaning - day trips
 day_trips <- train_data %>%
   filter(trip_duration < 24*3600 & trip_duration > 22*3600)
 
 nrow(day_trips)
 
-#shorter than a few minutes
+# data cleaning - shorter than a few minutes
 min_trips <- train_data %>%
   filter(trip_duration < 5*60)
 
 nrow(min_trips)
 
-#zero distance trips
+# data cleaning - zero distance trips
 zero_dist <- train_data %>%
   filter(near(total_distance,0))
 
@@ -87,7 +87,7 @@ nrow(zero_dist)
 
 train_data <- train_data[!(train_data$total_distance==0),]
 
-#external features
+# addition of external features
 weather <- read.csv(file.choose())
 
 weather <- weather %>%
@@ -106,8 +106,7 @@ foo <- weather %>%
 
 train_data <- left_join(train_data, foo, by = "date")
 
-#combining train and test data
-#distances
+# formatting of features - distances
 pick_coord <- full %>%
   select(pickup_longitude, pickup_latitude)
 
@@ -122,14 +121,14 @@ full$jfk_dist_drop <- distCosine(drop_coord, jfk_coord)
 full$lg_dist_pick <- distCosine(pick_coord, la_guardia_coord)
 full$lg_dist_drop <- distCosine(drop_coord, la_guardia_coord)
 
-#dates
+# formatting of features - dates
 full <- full %>%
   mutate(pickup_datetime = ymd_hms(pickup_datetime),
          dropoff_datetime = ymd_hms(dropoff_datetime),
          date = date(pickup_datetime)
   )
 
-#weather
+# formatting of features - weather
 foo <- weather %>%
   select(date, rain, s_fall, all_precip, has_snow, has_rain, s_depth, max_temp, min_temp)
 
@@ -147,7 +146,7 @@ full <- full %>%
          passenger_count = as.integer(passenger_count),
   )
 
-#formating of features
+# formatting of features - date, time, day
 full$pickup_month <- month(full$pickup_datetime)
 full$pickup_day <- day(full$pickup_datetime)
 full$pickup_hour <- hour(full$pickup_datetime)
@@ -167,17 +166,17 @@ full <- full %>%
 
 glimpse(full)
 
-#putting full back into train and test
+# taking full set and dividing back into train and test sets
 train_set <- filter(full, full$dset == 'train_data')
 test_set <- filter(full, full$dset == 'test_data')
 
-#spliting train data
+# splitting train data
 sample <- sample_n(train_set, 1400000)
 sample_set <- sample.int(n=nrow(sample), size = floor(.7*nrow(sample)), replace = F)
 train_train <- sample[sample_set,]
 train_test <- sample[-sample_set,]
 
-#model features
+# building model
 fit <- lm(trip_duration ~ vendor_id + 
             passenger_count + 
             pickup_longitude + 
@@ -207,17 +206,14 @@ fit <- lm(trip_duration ~ vendor_id +
             )
 
 summary(fit)
-
 prediction <- predict(fit, train_test)
-
 data.frame( R2 = R2(prediction, train_test$trip_duration),
             RMSE = RMSE(prediction, train_test$trip_duration),
             MAE = MAE(prediction,train_test$trip_duration))
-
 percent.errors <- abs((train_test$trip_duration-prediction)/train_test$trip_duration)*100
 mean(percent.errors)
 
-#log model
+# building log model
 fit.log <- lm(trip_duration ~ vendor_id + 
             passenger_count + 
             pickup_longitude + 
@@ -247,17 +243,13 @@ fit.log <- lm(trip_duration ~ vendor_id +
 )
 
 summary(fit.log)
-
 prediction.log <- exp(predict(fit.log, train_test))
-
 data.frame( R2 = R2(prediction.log, train_test$trip_duration),
             RMSE = RMSE(prediction.log, train_test$trip_duration),
             MAE = MAE(prediction.log,train_test$trip_duration))
-
 percent.errors.log <- abs((train_test$trip_duration-prediction.log)/train_test$trip_duration)*100
 mean(percent.errors.log)
 
-#Test on actual test data
-
+# predict trip duration on actual test data
 predicted.duration.log <- exp(predict(fit.log,test_set))
 write.csv(predicted.duration.log, file = "Predicted Trip Duration v7.csv")
